@@ -401,15 +401,6 @@ def render_top_factors(latest: pd.Series):
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    st.markdown("📅 **Chart Period**")
-    chart_display_period = st.selectbox(
-        "chart_period",
-        options=DISPLAY_PERIODS,
-        index=2,
-        format_func=lambda p: DISPLAY_PERIOD_LABEL[p],
-        label_visibility="collapsed",
-    )
-
     custom_raw  = st.text_input("Add custom tickers (comma-separated)", placeholder="e.g. NFLX, UBER")
     extra       = [t.strip().upper() for t in custom_raw.split(",") if t.strip()]
     all_tickers = list(dict.fromkeys(DEFAULT_TICKERS + extra))
@@ -419,17 +410,6 @@ with st.sidebar:
         options=all_tickers,
         default=["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"],
         format_func=ticker_label,
-    )
-
-    st.markdown("---")
-    st.markdown("📅 **Period Comparison**")
-    st.caption("Compare signals across different time windows:")
-    compare_periods = st.multiselect(
-        "compare_periods",
-        options=PERIODS,
-        default=["1mo", "3mo", "6mo"],
-        format_func=lambda p: PERIOD_LABEL[p],
-        label_visibility="collapsed",
     )
 
     run_btn = st.button("🔍 Get Recommendations", type="primary")
@@ -444,10 +424,9 @@ if model is None:
 # ════════════════════════════════════════════════════════════════
 # Tabs
 # ════════════════════════════════════════════════════════════════
-tab_home, tab_rec, tab_compare, tab_detail, tab_chart = st.tabs([
+tab_home, tab_rec, tab_detail, tab_chart = st.tabs([
     "🏠 Home",
     "🔮 Recommendations",
-    "📅 Period Comparison",
     "🔍 Single Stock Detail",
     "📉 Price Chart",
 ])
@@ -624,68 +603,6 @@ with tab_rec:
 # ════════════════════════════════════════════════════════════════
 # Tab 2 — Period Comparison
 # ════════════════════════════════════════════════════════════════
-with tab_compare:
-    st.markdown("### 📅 Compare Signals Across Different Time Periods")
-    st.markdown("See how the model's recommendation changes depending on the data window used.")
-
-    compare_ticker = st.selectbox(
-        "Choose a stock to compare",
-        options=selected if selected else DEFAULT_TICKERS[:5],
-        format_func=ticker_label,
-        key="compare_ticker_sel",
-    )
-
-    if not compare_periods:
-        st.warning("Please select at least one period in the sidebar.")
-    elif st.button("🔄 Run Period Comparison", key="compare_btn"):
-        period_results = {}
-        with st.spinner(f"Fetching {compare_ticker} across {len(compare_periods)} periods…"):
-            for period in compare_periods:
-                sig, conf, latest, _ = predict_ticker(compare_ticker, period=period)
-                period_results[period] = {"signal": sig, "confidence": conf, "latest": latest}
-        st.session_state["period_results"] = period_results
-        st.session_state["compare_ticker"] = compare_ticker
-
-    if "period_results" in st.session_state and st.session_state.get("compare_ticker") == compare_ticker:
-        period_results = st.session_state["period_results"]
-        cols = st.columns(len(period_results))
-        for col, (period, data) in zip(cols, period_results.items()):
-            sig  = data["signal"]
-            conf = data["confidence"]
-            with col:
-                if sig is None:
-                    st.error(f"**{PERIOD_LABEL[period]}**\n\nNo data")
-                else:
-                    color     = SIGNAL_COLOR[sig]
-                    conf_line = (f"<div style='font-size:1rem;color:#555;margin-top:4px'>"
-                                 f"Confidence: {conf:.1f}%</div>") if conf is not None else ""
-                    st.markdown(
-                        f"<div style='text-align:center;padding:16px;border-radius:10px;"
-                        f"background:{color}12;border:2px solid {color};margin-bottom:8px'>"
-                        f"<div style='font-size:1.1rem;font-weight:600;color:#555'>{PERIOD_LABEL[period]}</div>"
-                        f"<div style='font-size:2.5rem;margin:4px 0'>{SIGNAL_EMOJI[sig]}</div>"
-                        f"<div style='font-size:1.4rem;font-weight:700;color:{color}'>{SIGNAL_LABEL[sig]}</div>"
-                        + conf_line + "</div>",
-                        unsafe_allow_html=True,
-                    )
-                    if data["latest"] is not None:
-                        st.caption(f"Close: ${float(data['latest']['Close']):.2f}")
-                        st.caption(f"5d Return: {float(data['latest']['Return_5d'])*100:.2f}%")
-                        st.caption(f"MA Ratio: {float(data['latest']['MA_ratio']):.4f}")
-
-        st.markdown("---")
-        sigs = [d["signal"] for d in period_results.values() if d["signal"] is not None]
-        if sigs:
-            if len(set(sigs)) == 1:
-                s = sigs[0]
-                st.success(f"✅ **Consistent signal**: All periods show {SIGNAL_EMOJI[s]} **{SIGNAL_LABEL[s]}** — this signal is more reliable.")
-            else:
-                st.warning("⚠️ **Conflicting signals**: Different periods show different signals. The stock may be at a turning point — wait for confirmation before acting.")
-                for s in set(sigs):
-                    periods_with = [PERIOD_LABEL[p] for p, d in period_results.items() if d["signal"] == s]
-                    st.markdown(f"- {SIGNAL_EMOJI[s]} **{SIGNAL_LABEL[s]}**: {', '.join(periods_with)}")
-
-# ════════════════════════════════════════════════════════════════
 # Tab 3 — Single Stock Detail
 # ════════════════════════════════════════════════════════════════
 with tab_detail:
@@ -752,18 +669,14 @@ with tab_chart:
         key="chart_sel",
     )
 
-    st.markdown(
-        "<div class='info-box'>"
-        "<b>ℹ️ Why doesn't the display period affect the prediction?</b><br><br>"
-        "The model predicts using <b>today's technical indicators</b> (e.g. MA20, Momentum_20). "
-        "These indicators need at least 20 trading days of history to compute correctly. "
-        "So the app always fetches <b>6 months of data</b> to ensure all indicators are accurate — "
-        "but the prediction only looks at the <b>most recent day's values</b>. "
-        "The display period only controls <b>how much of the chart is shown</b>."
-        "</div>",
-        unsafe_allow_html=True,
+    chart_display_period = st.radio(
+        "Display period",
+        options=DISPLAY_PERIODS,
+        index=2,
+        format_func=lambda p: DISPLAY_PERIOD_LABEL[p],
+        horizontal=True,
+        key="chart_period_radio",
     )
-    st.markdown(f"Displaying: **{DISPLAY_PERIOD_LABEL[chart_display_period]}** (change period in the sidebar ←)")
 
     if st.button("Show Chart", key="chart_btn"):
         with st.spinner(f"Loading {chart_ticker}…"):
