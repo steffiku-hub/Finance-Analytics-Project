@@ -208,6 +208,7 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 # ── Data download ────────────────────────────────────────────────
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_stock(ticker: str, period: str = "6mo") -> pd.DataFrame:
+    # For 1y display we need a full year; otherwise 6mo is enough for all rolling features
     fetch_period = period if period in ("1y", "2y") else MIN_FETCH_PERIOD
     df = yf.download(ticker, period=fetch_period, progress=False, auto_adjust=True)
     if df.empty:
@@ -339,8 +340,14 @@ def get_top_features(n: int = 3):
     indices = np.argsort(imp)[::-1][:n]
     return [(FEATURE_COLS[i], imp[i]) for i in indices]
 
-def predict_ticker(ticker: str, period: str = "6mo"):
-    raw = fetch_stock(ticker, period=period)
+def predict_ticker(ticker: str, fetch_period: str = "6mo"):
+    """
+    fetch_period controls how much data is downloaded.
+    For display windows > 6mo (e.g. 1y) we fetch more so the chart shows the full range.
+    Features and the signal are always computed from the full fetched dataset,
+    and the prediction uses the most recent row only.
+    """
+    raw = fetch_stock(ticker, period=fetch_period)
     if raw.empty or len(raw) < 25:
         return None, None, None, None
     df     = compute_features(raw)
@@ -523,11 +530,9 @@ with tab_home:
             "<h3>🗺️ How to Use</h3>"
             "<ol>"
             "<li>Select your <b>stocks</b> in the sidebar (or add custom tickers)</li>"
-            "<li>Choose a <b>chart period</b> in the sidebar</li>"
-            "<li>Click <b>🔍 Get Recommendations</b> for a batch overview</li>"
-            "<li>Go to <b>Single Stock Detail</b> for a deep-dive on one stock</li>"
-            "<li>Use <b>Period Comparison</b> to check signal consistency across timeframes</li>"
-            "<li>View the <b>Price Chart</b> with moving averages for any stock</li>"
+            "<li>Click <b>🔍 Get Recommendations</b> for a batch overview of all selected stocks</li>"
+            "<li>Go to <b>Single Stock Detail</b> for a deep-dive — confidence score, signal explanation, and top factors</li>"
+            "<li>Head to <b>Price Chart</b> and pick a time period (1 Week to 1 Year) to view price and moving averages</li>"
             "</ol>"
             "</div>",
             unsafe_allow_html=True,
@@ -680,7 +685,9 @@ with tab_chart:
 
     if st.button("Show Chart", key="chart_btn"):
         with st.spinner(f"Loading {chart_ticker}…"):
-            sig, conf, latest, df_feat = predict_ticker(chart_ticker)
+            # Pass the display period so 1-year charts actually fetch 1 year of data
+            fetch_p = chart_display_period if chart_display_period == "1y" else "6mo"
+            sig, conf, latest, df_feat = predict_ticker(chart_ticker, fetch_period=fetch_p)
 
         if df_feat is None:
             st.error(f"Could not fetch data for **{ticker_label(chart_ticker)}**.")
