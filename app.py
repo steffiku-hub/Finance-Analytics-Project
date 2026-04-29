@@ -41,7 +41,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-DISCLAIMER = "*⚠️ For informational purposes only. Not financial advice. Past signals do not guarantee future returns.*"
+DISCLAIMER = "*⚠️ This tool provides financial information for educational purposes. While the signals may be used as a reference, please exercise caution and conduct your own research. Past signals do not guarantee future returns.*"
 
 # ── Constants ────────────────────────────────────────────────────
 FEATURE_COLS = [
@@ -115,7 +115,7 @@ MIN_FETCH_PERIOD = "6mo"
 MODEL_TRAIN_INFO = {
     "companies": 20,
     "index":     "S&P 500",
-    "period":    "2018 – 2023",
+    "period":    "2021 – 2026 (current)",
     "source":    "yFinance (daily OHLCV)",
 }
 
@@ -545,8 +545,7 @@ with tab_home:
             "Predictions are most reliable for:<br>"
             "✅ S&P 500 components &nbsp; ✅ Large-cap U.S. equities &nbsp; ✅ U.S. ETFs (SPY, QQQ)<br>"
             "Small-cap stocks, international equities, or crypto ETFs may be less accurate — use with caution.<br><br>"
-            "<b>Model drift:</b> The model was trained on data up to 2023. Market conditions change over time, "
-            "which may reduce accuracy for more recent periods."
+            "<b>Training period:</b> Data runs from 2021 through to the current date (2026), sourced live via yFinance."
             "</div>"
             "<p>We engineer <b>18 technical features</b> from raw OHLCV data:</p>",
             unsafe_allow_html=True,
