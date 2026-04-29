@@ -1,9 +1,11 @@
 # ================================================================
-# app.py  —  Stock Investment Decision Support (Enhanced)
-# New features:
+# app.py  —  Stock Investment Decision Support
+# Features:
 #   - Confidence % via predict_proba
-#   - Sidebar period comparison (1mo / 3mo / 6mo / 1y)
-#   - Decision explanation (key indicators driving the signal)
+#   - Sidebar period comparison
+#   - Plain-English signal explanation
+#   - Per-feature plain-English explanation cards
+#   - Light theme, all English UI
 # ================================================================
 
 import pickle
@@ -21,6 +23,44 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── Global CSS (light-theme) ─────────────────────────────────────
+st.markdown("""
+<style>
+.signal-card {
+    background: #f0f4ff;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 8px 0;
+}
+.signal-card .card-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: #1a1a1a;
+    margin-bottom: 4px;
+}
+.signal-card .card-detail {
+    font-size: 13px;
+    color: #444;
+    line-height: 1.5;
+}
+.info-box {
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 8px 0 16px 0;
+    color: #1e3a5f;
+    font-size: 0.88rem;
+}
+.info-box b { color: #1d4ed8; }
+.signal-plain-buy  { background:#f0fdf4; border-left:4px solid #22c55e; border-radius:6px; padding:14px 18px; margin:12px 0; color:#14532d; }
+.signal-plain-hold { background:#fefce8; border-left:4px solid #eab308; border-radius:6px; padding:14px 18px; margin:12px 0; color:#713f12; }
+.signal-plain-sell { background:#fef2f2; border-left:4px solid #ef4444; border-radius:6px; padding:14px 18px; margin:12px 0; color:#7f1d1d; }
+.signal-plain-buy b, .signal-plain-hold b, .signal-plain-sell b { font-size:1rem; }
+.signal-plain-buy span, .signal-plain-hold span, .signal-plain-sell span { font-size:0.9rem; }
+</style>
+""", unsafe_allow_html=True)
+
 # ── Constants ────────────────────────────────────────────────────
 FEATURE_COLS = [
     "Return_1d", "Return_5d",
@@ -31,34 +71,76 @@ FEATURE_COLS = [
     "Volume_Spike",
 ]
 
-# Human-readable feature names for explanations
-FEATURE_NAMES = {
-    "Return_1d":     "1日回報率",
-    "Return_5d":     "5日回報率",
-    "MA_5":          "5日移動平均",
-    "MA_20":         "20日移動平均",
-    "MA_ratio":      "短/長期均線比率 (5/20)",
-    "MA_diff":       "均線差距 (MA5 - MA20)",
-    "Price_vs_MA20": "股價 vs 20日均線",
-    "Volatility_5":  "5日波動率",
-    "Volume_MA5":    "5日成交量均值",
-    "Volume_Ratio":  "成交量比率",
-    "Momentum_3":    "3日動量",
-    "Momentum_10":   "10日動量",
-    "Momentum_20":   "20日動量",
-    "HL_Range":      "當日高低幅度",
-    "Volatility_10": "10日波動率",
-    "Breakout_20":   "20日突破指標",
-    "Drawdown_20":   "20日回撤指標",
-    "Volume_Spike":  "成交量突破",
+FEATURE_DESCRIBE = {
+    "Return_1d":     "1-day price return",
+    "Return_5d":     "5-day price return",
+    "MA_5":          "5-day moving average level",
+    "MA_20":         "20-day moving average level",
+    "MA_ratio":      "MA5/MA20 ratio (short vs long trend)",
+    "MA_diff":       "MA5 minus MA20 gap",
+    "Price_vs_MA20": "Price relative to 20-day MA",
+    "Volatility_5":  "5-day return volatility",
+    "Volume_MA5":    "5-day average volume",
+    "Volume_Ratio":  "Today's volume vs 5-day avg",
+    "Momentum_3":    "3-day price momentum",
+    "Momentum_10":   "10-day price momentum",
+    "Momentum_20":   "20-day price momentum",
+    "HL_Range":      "Intraday High-Low range",
+    "Volatility_10": "10-day return volatility",
+    "Breakout_20":   "Price vs 20-day high (breakout)",
+    "Drawdown_20":   "Price vs 20-day low (drawdown)",
+    "Volume_Spike":  "Volume spike vs 20-day avg",
 }
 
-SIGNAL_LABEL = { 1: "BUY",  0: "HOLD", -1: "SELL" }
-SIGNAL_EMOJI = { 1: "🟢",   0: "🟡",    -1: "🔴"  }
-SIGNAL_COLOR = { 1: "#22c55e", 0: "#eab308", -1: "#ef4444" }
+SIGNAL_LABEL    = { 1: "BUY",  0: "HOLD", -1: "SELL" }
+SIGNAL_EMOJI    = { 1: "🟢",   0: "🟡",    -1: "🔴"  }
+SIGNAL_COLOR    = { 1: "#22c55e", 0: "#eab308", -1: "#ef4444" }
+SIGNAL_CSS_CLASS = { 1: "signal-plain-buy", 0: "signal-plain-hold", -1: "signal-plain-sell" }
 
+SIGNAL_PLAIN = {
+    1: (
+        "📢 The model suggests this may be a good time to BUY.",
+        "Based on technical indicators, this stock is showing strong recent momentum and "
+        "an upward moving-average trend, suggesting it may be in the early-to-mid stage of "
+        "an uptrend. This is not a guarantee of profit — always factor in your own risk tolerance."
+    ),
+    0: (
+        "⏸️ The model suggests HOLDING — no clear action needed right now.",
+        "Current technical indicators show no strong directional bias. "
+        "If you already hold a position, it is reasonable to stay put. "
+        "If you have not entered yet, consider waiting for a clearer signal."
+    ),
+    -1: (
+        "⚠️ The model suggests considering a SELL or reducing exposure.",
+        "Technical indicators show weakening momentum and possible bearish signals "
+        "such as a death cross or support breakdown. Short-term downside risk appears elevated. "
+        "If you hold a position, consider a stop-loss or trimming your size."
+    ),
+}
+
+# Chart display periods — controls what is SHOWN, not what is fetched
+DISPLAY_PERIODS = ["1wk", "1mo", "3mo", "6mo", "1y"]
+DISPLAY_PERIOD_LABEL = {
+    "1wk": "1 Week",
+    "1mo": "1 Month",
+    "3mo": "3 Months",
+    "6mo": "6 Months",
+    "1y":  "1 Year",
+}
+DISPLAY_PERIOD_DAYS = {
+    "1wk": 7,
+    "1mo": 30,
+    "3mo": 90,
+    "6mo": 180,
+    "1y":  365,
+}
+
+# Comparison periods (Period Comparison tab)
 PERIODS = ["1mo", "3mo", "6mo", "1y"]
-PERIOD_LABEL = {"1mo": "1 個月", "3mo": "3 個月", "6mo": "6 個月", "1y": "1 年"}
+PERIOD_LABEL = {"1mo": "1 Month", "3mo": "3 Months", "6mo": "6 Months", "1y": "1 Year"}
+
+# Always fetch at least 6 months so MA_20 / Momentum_20 / Breakout_20 can be computed
+MIN_FETCH_PERIOD = "6mo"
 
 DEFAULT_TICKERS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
@@ -78,9 +160,7 @@ def load_model():
         return None
 
 model = load_model()
-
-# Check if model supports predict_proba (Random Forest does)
-HAS_PROBA = model is not None and hasattr(model, "predict_proba")
+HAS_PROBA      = model is not None and hasattr(model, "predict_proba")
 HAS_IMPORTANCE = model is not None and hasattr(model, "feature_importances_")
 
 # ── Feature engineering ──────────────────────────────────────────
@@ -112,137 +192,215 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 # ── Data download ────────────────────────────────────────────────
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_stock(ticker: str, period: str = "6mo") -> pd.DataFrame:
-    df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
+    """
+    Always fetches MIN_FETCH_PERIOD of data regardless of the display period,
+    so rolling features like MA_20 always have enough history.
+    Slicing to the display window happens later via slice_for_display().
+    """
+    fetch_period = period if period in ("1y", "2y") else MIN_FETCH_PERIOD
+    df = yf.download(ticker, period=fetch_period, progress=False, auto_adjust=True)
     if df.empty:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.loc[:, ~df.columns.duplicated()]
-    df = df[["Open", "High", "Low", "Close", "Volume"]].reset_index()
-    date_col = next((c for c in df.columns if c.lower() in {"date", "datetime"}), None)
-    if date_col and date_col != "Date":
+    needed = ["Open", "High", "Low", "Close", "Volume"]
+    if not all(c in df.columns for c in needed):
+        return pd.DataFrame()
+    df = df[needed].reset_index()
+    date_col = next((c for c in df.columns if c.lower() in {"date", "datetime", "timestamp"}), None)
+    if date_col is None:
+        return pd.DataFrame()
+    if date_col != "Date":
         df = df.rename(columns={date_col: "Date"})
     df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
     return df.sort_values("Date").reset_index(drop=True)
 
+def slice_for_display(df: pd.DataFrame, display_period: str) -> pd.DataFrame:
+    """Trim a fully-featured DataFrame to only the requested display window."""
+    days = DISPLAY_PERIOD_DAYS.get(display_period, 180)
+    cutoff = df["Date"].max() - pd.Timedelta(days=days)
+    return df[df["Date"] >= cutoff].copy()
+
 # ── Confidence calculation ───────────────────────────────────────
 def get_confidence(X: np.ndarray, signal: int) -> float:
-    """Return confidence % for the predicted signal using predict_proba."""
     if not HAS_PROBA:
         return None
-    proba = model.predict_proba(X)[0]
+    proba   = model.predict_proba(X)[0]
     classes = list(model.classes_)
     if signal in classes:
-        idx = classes.index(signal)
-        return round(proba[idx] * 100, 1)
+        return round(proba[classes.index(signal)] * 100, 1)
     return None
 
-# ── Decision explanation ─────────────────────────────────────────
-def generate_explanation(signal: int, latest: pd.Series) -> str:
-    """Generate a human-readable explanation for the signal."""
-    reasons = []
+# ── Per-feature plain-English explanation ────────────────────────
+def explain_feature(feat: str, val: float) -> str:
+    pct = val * 100
 
-    # Momentum analysis
-    m3  = latest.get("Momentum_3",  0)
-    m10 = latest.get("Momentum_10", 0)
-    m20 = latest.get("Momentum_20", 0)
-    if signal == 1:
-        if m10 > 0.03:
-            reasons.append(f"📈 10日動量強勁（+{m10*100:.1f}%），顯示近期上升趨勢")
-        if m20 > 0.05:
-            reasons.append(f"📈 20日動量優秀（+{m20*100:.1f}%），中期走勢正面")
-    elif signal == -1:
-        if m10 < -0.03:
-            reasons.append(f"📉 10日動量疲弱（{m10*100:.1f}%），近期下跌壓力")
-        if m20 < -0.05:
-            reasons.append(f"📉 20日動量惡化（{m20*100:.1f}%），中期趨勢向下")
+    if feat == "MA_ratio":
+        direction = "above" if val > 1.0 else "below"
+        sentiment = "bullish — short-term trend is rising. 📈" if val > 1.0 else "bearish — short-term trend is falling. 📉"
+        return (f"We compare the 5-day average price to the 20-day average price. "
+                f"A ratio of {val:.3f} means the short-term average is {direction} the long-term average — {sentiment}")
+    if feat == "MA_diff":
+        direction = "above" if val > 0 else "below"
+        return (f"The 5-day moving average is ${abs(val):.2f} {direction} the 20-day moving average. "
+                f"{'A positive gap suggests upward momentum.' if val > 0 else 'A negative gap suggests downward pressure.'}")
+    if feat == "Price_vs_MA20":
+        rel = "above" if val > 1 else "below"
+        pct_diff = abs(val - 1) * 100
+        return (f"Think of the 20-day average as the stock's one-month fair value. "
+                f"The current price is {pct_diff:.1f}% {rel} this average. "
+                f"{'Running above average — momentum is strong. 🔥' if val > 1 else 'Trading below average — may be weak or undervalued. 💡'}")
+    if feat == "Return_1d":
+        direction = "UP" if val > 0 else "DOWN"
+        return (f"The stock moved {direction} {abs(pct):.2f}% yesterday. "
+                f"{'Positive momentum from yesterday.' if val > 0 else 'Negative momentum from yesterday.'}")
+    if feat == "Return_5d":
+        direction = "UP" if val > 0 else "DOWN"
+        return (f"Over the past 5 trading days (roughly 1 week), the stock is {direction} {abs(pct):.2f}%. "
+                f"{'Short-term strength.' if val > 0 else 'Short-term weakness.'}")
+    if feat == "Momentum_3":
+        direction = "gained" if val > 0 else "lost"
+        return (f"The stock has {direction} {abs(pct):.2f}% over the last 3 days. "
+                f"{'Very recent buying pressure.' if val > 0 else 'Very recent selling pressure.'}")
+    if feat == "Momentum_10":
+        direction = "up" if val > 0 else "down"
+        return (f"The stock is {direction} {abs(pct):.2f}% over the last 10 days (2 weeks). "
+                f"{'The uptrend has some staying power.' if val > 0 else 'The downtrend has some staying power.'}")
+    if feat == "Momentum_20":
+        direction = "up" if val > 0 else "down"
+        return (f"The stock is {direction} {abs(pct):.2f}% over the last 20 days (~1 month). "
+                f"{'Sustained upward trend.' if val > 0 else 'Sustained downward trend.'}")
+    if feat == "MA_5":
+        return (f"The average closing price over the last 5 trading days is ${val:.2f}. "
+                f"Used alongside MA_20 to detect trend direction.")
+    if feat == "MA_20":
+        return (f"The average closing price over the last 20 trading days (~1 month) is ${val:.2f}. "
+                f"Acts as a key support or resistance reference level.")
+    if feat == "Volatility_5":
+        level = "High" if val > 0.02 else "Low"
+        mood  = "moving a lot this week — higher risk, higher reward potential." if val > 0.02 else "relatively calm and stable this week."
+        return f"{level} volatility ({abs(pct):.2f}%) — the stock has been {mood}"
+    if feat == "Volatility_10":
+        level = "High" if val > 0.02 else "Low"
+        mood  = "moving a lot over 2 weeks — signals an uncertain market." if val > 0.02 else "stable over 2 weeks."
+        return f"{level} volatility ({abs(pct):.2f}%) — the stock has been {mood}"
+    if feat == "Volume_MA5":
+        return f"The average number of shares traded per day over the last 5 days is {val:,.0f}. Used as a baseline for volume spikes."
+    if feat == "Volume_Ratio":
+        level = "higher" if val > 1 else "lower"
+        return (f"Today's trading volume is {val:.2f}x the 5-day average — {level} than usual. "
+                f"{'Elevated volume can confirm a price move.' if val > 1.2 else 'Volume is within normal range.'}")
+    if feat == "Volume_Spike":
+        return (f"Today's volume is {val:.2f}x the 20-day average. "
+                f"{'A significant volume spike — strong market interest. 🔊' if val > 1.5 else 'Volume is within normal range.' if val > 0.8 else 'Low volume — weak market participation. 🔇'}")
+    if feat == "HL_Range":
+        width = "wide" if val > 0.02 else "narrow"
+        return (f"Today's price moved {abs(pct):.2f}% from its low to its high — a {width} intraday range. "
+                f"{'Wide range = active, volatile trading session.' if val > 0.02 else 'Narrow range = calm, steady trading today.'}")
+    if feat == "Breakout_20":
+        return (f"The current price is {val*100:.1f}% of the 20-day high. "
+                f"{'Close to the 20-day high — potential breakout. 🚀' if val > 0.97 else 'Well below the 20-day high — momentum is weak.'}")
+    if feat == "Drawdown_20":
+        return (f"The current price is {val*100:.1f}% of the 20-day low. "
+                f"{'Well above the recent low — good support cushion. ✅' if val > 1.05 else 'Close to the 20-day low — near support, watch carefully.'}")
+    return f"Value: {val:.4f}"
 
-    # Moving average analysis
-    ma_ratio = latest.get("MA_ratio", 1.0)
-    ma_diff  = latest.get("MA_diff",  0)
-    if signal == 1 and ma_ratio > 1.01:
-        reasons.append(f"📊 短期均線（MA5）高於長期均線（MA20）{(ma_ratio-1)*100:.2f}%，黃金交叉信號")
-    elif signal == -1 and ma_ratio < 0.99:
-        reasons.append(f"📊 短期均線（MA5）低於長期均線（MA20）{(1-ma_ratio)*100:.2f}%，死亡交叉信號")
+FEATURE_TITLE = {
+    "Return_1d":     lambda v: f"⚡ Yesterday's price change: {v*100:.2f}%",
+    "Return_5d":     lambda v: f"📅 Last 5 days price change: {v*100:.2f}%",
+    "MA_5":          lambda v: f"📐 5-day average price: ${v:.2f}",
+    "MA_20":         lambda v: f"📐 20-day average price: ${v:.2f}",
+    "MA_ratio":      lambda v: f"📊 Short vs Long-term Trend: {v:.3f}",
+    "MA_diff":       lambda v: f"📏 MA gap (short minus long): ${v:.2f}",
+    "Price_vs_MA20": lambda v: f"📍 Price vs 20-day average: {v:.3f}",
+    "Volatility_5":  lambda v: f"🌊 5-day price swings: {v*100:.2f}%",
+    "Volatility_10": lambda v: f"🌊 10-day price swings: {v*100:.2f}%",
+    "Volume_MA5":    lambda v: f"📦 5-day avg volume: {v:,.0f}",
+    "Volume_Ratio":  lambda v: f"📦 Volume ratio (today vs 5d avg): {v:.2f}x",
+    "Volume_Spike":  lambda v: f"🔊 Volume spike (today vs 20d avg): {v:.2f}x",
+    "Momentum_3":    lambda v: f"🚀 3-day momentum: {v*100:.2f}%",
+    "Momentum_10":   lambda v: f"🏃 10-day momentum: {v*100:.2f}%",
+    "Momentum_20":   lambda v: f"🗓️ 1-month momentum: {v*100:.2f}%",
+    "HL_Range":      lambda v: f"📏 Today's High-Low range: {v*100:.2f}%",
+    "Breakout_20":   lambda v: f"🚀 Price vs 20-day high: {v*100:.1f}%",
+    "Drawdown_20":   lambda v: f"🛡️ Price vs 20-day low: {v*100:.1f}%",
+}
 
-    # Price vs MA20
-    pma = latest.get("Price_vs_MA20", 1.0)
-    if signal == 1 and pma > 1.02:
-        reasons.append(f"💪 股價高於20日均線 {(pma-1)*100:.1f}%，強勢突破均線壓力")
-    elif signal == -1 and pma < 0.98:
-        reasons.append(f"⚠️ 股價低於20日均線 {(1-pma)*100:.1f}%，跌破均線支撐")
-
-    # Breakout analysis
-    breakout = latest.get("Breakout_20", 1.0)
-    if signal == 1 and breakout > 0.97:
-        reasons.append(f"🚀 股價接近20日高點（{breakout*100:.1f}%），突破形態良好")
-    elif signal == -1 and breakout < 0.90:
-        reasons.append(f"🔻 股價遠離20日高點（僅{breakout*100:.1f}%），技術形態偏弱")
-
-    # Volume analysis
-    vol_ratio = latest.get("Volume_Ratio",  1.0)
-    vol_spike = latest.get("Volume_Spike",  1.0)
-    if vol_spike > 1.5:
-        reasons.append(f"🔊 成交量激增（{vol_spike:.1f}x 20日均量），資金活躍度高")
-    elif vol_spike < 0.7:
-        reasons.append(f"🔇 成交量萎縮（僅{vol_spike:.1f}x 20日均量），市場興趣不足")
-
-    # Volatility
-    vol5 = latest.get("Volatility_5", 0)
-    if vol5 > 0.03:
-        reasons.append(f"⚡ 5日波動率偏高（{vol5*100:.2f}%），市場波動較大，風險注意")
-
-    # Return analysis
-    r1 = latest.get("Return_1d", 0)
-    r5 = latest.get("Return_5d", 0)
-    if signal == 1:
-        if r5 > 0.02:
-            reasons.append(f"✅ 近5日累計回報 +{r5*100:.1f}%，短期表現亮眼")
-    elif signal == -1:
-        if r5 < -0.02:
-            reasons.append(f"❌ 近5日累計回報 {r5*100:.1f}%，短期持續走弱")
-
-    # Fallback
-    if not reasons:
-        if signal == 1:
-            reasons.append("✅ 綜合技術指標顯示買入信號，但強度一般，建議謹慎操作")
-        elif signal == -1:
-            reasons.append("⚠️ 綜合技術指標顯示賣出信號，但強度一般，建議謹慎操作")
-        else:
-            reasons.append("⏸️ 各項指標無明顯偏向，建議觀望，等待更清晰信號")
-
-    return reasons
-
-# ── Feature importance top drivers ──────────────────────────────
-def get_top_features(n=5):
-    """Return top N feature names by model importance."""
+# ── Top features by model importance ────────────────────────────
+def get_top_features(n: int = 3):
     if not HAS_IMPORTANCE:
         return []
-    imp = model.feature_importances_
+    imp     = model.feature_importances_
     indices = np.argsort(imp)[::-1][:n]
-    return [(FEATURE_COLS[i], FEATURE_NAMES.get(FEATURE_COLS[i], FEATURE_COLS[i]), imp[i]) for i in indices]
+    return [(FEATURE_COLS[i], imp[i]) for i in indices]
 
-# ── Predict for one ticker ───────────────────────────────────────
+# ── Predict ──────────────────────────────────────────────────────
 def predict_ticker(ticker: str, period: str = "6mo"):
-    """Returns (signal_int, confidence_pct, latest_row_series, full_df_with_features)"""
     raw = fetch_stock(ticker, period=period)
     if raw.empty or len(raw) < 25:
         return None, None, None, None
-    df = compute_features(raw)
+    df     = compute_features(raw)
     latest = df.dropna(subset=FEATURE_COLS).iloc[-1]
-    X = latest[FEATURE_COLS].values.reshape(1, -1)
+    X      = latest[FEATURE_COLS].values.reshape(1, -1)
     signal = int(model.predict(X)[0])
-    confidence = get_confidence(X, signal)
-    return signal, confidence, latest, df
+    conf   = get_confidence(X, signal)
+    return signal, conf, latest, df
+
+# ── Reusable UI helpers ──────────────────────────────────────────
+def render_signal_plain(signal: int):
+    title, body = SIGNAL_PLAIN[signal]
+    css = SIGNAL_CSS_CLASS[signal]
+    st.markdown(
+        f"<div class='{css}'><b>{title}</b><br><span>{body}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+def render_confidence(confidence: float, color: str):
+    if confidence is None:
+        return
+    if confidence >= 65:
+        note, icon = "High confidence — the model is fairly certain about this signal.", "✅"
+        note_color = "#166534"
+    elif confidence >= 45:
+        note, icon = "Moderate confidence — signal is plausible but not strong.", "🟡"
+        note_color = "#854d0e"
+    else:
+        note, icon = "Low confidence — treat with caution — the model is not very sure about this signal.", "🔺"
+        note_color = "#991b1b"
+    st.markdown("**Model Confidence**")
+    st.markdown(
+        f"<div style='background:#e5e7eb;border-radius:8px;height:22px;width:100%;overflow:hidden;margin-bottom:4px'>"
+        f"<div style='width:{confidence}%;height:22px;background:{color};border-radius:8px;"
+        f"display:flex;align-items:center;padding-left:10px'>"
+        f"<span style='color:white;font-weight:700;font-size:13px'>{confidence:.1f}%</span></div></div>"
+        f"<div style='font-size:13px;color:{note_color};margin-top:2px'>{icon} {note}</div>",
+        unsafe_allow_html=True,
+    )
+
+def render_top_factors(latest: pd.Series):
+    top = get_top_features(3)
+    if not top:
+        return
+    st.markdown("#### 📌 Why this signal? (Top 3 most important factors)")
+    for feat_col, importance in top:
+        val   = float(latest.get(feat_col, 0))
+        title = FEATURE_TITLE.get(feat_col, lambda v: f"{feat_col}: {v:.4f}")(val)
+        body  = explain_feature(feat_col, val)
+        st.markdown(
+            f"<div class='signal-card'>"
+            f"<div class='card-title'>{title}</div>"
+            f"<div class='card-detail'>{body}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
 # ════════════════════════════════════════════════════════════════
 # UI
 # ════════════════════════════════════════════════════════════════
-
 st.title("📈 Stock Investment Decision Support")
 st.markdown("Pre-trained Random Forest → live market data → **Buy / Hold / Sell** signal with confidence & explanation.")
 
-# ── Model status banner ──────────────────────────────────────────
 if model is None:
     st.error("⚠️ `model.pkl` not found. Please run `python train_model.py` first, then restart the app.")
     st.stop()
@@ -258,8 +416,17 @@ else:
 with st.sidebar:
     st.header("⚙️ Settings")
 
+    st.markdown("📅 **Chart Period**")
+    chart_display_period = st.selectbox(
+        "chart_period",
+        options=DISPLAY_PERIODS,
+        index=2,
+        format_func=lambda p: DISPLAY_PERIOD_LABEL[p],
+        label_visibility="collapsed",
+    )
+
     custom_raw = st.text_input("Add custom tickers (comma-separated)", placeholder="e.g. NFLX, UBER")
-    extra = [t.strip().upper() for t in custom_raw.split(",") if t.strip()]
+    extra      = [t.strip().upper() for t in custom_raw.split(",") if t.strip()]
     all_tickers = list(dict.fromkeys(DEFAULT_TICKERS + extra))
 
     selected = st.multiselect(
@@ -269,13 +436,14 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.subheader("📅 Period Comparison")
-    st.markdown("Compare signals across different time windows:")
+    st.markdown("📅 **Period Comparison**")
+    st.caption("Compare signals across different time windows:")
     compare_periods = st.multiselect(
-        "Select periods to compare",
+        "compare_periods",
         options=PERIODS,
         default=["1mo", "3mo", "6mo"],
         format_func=lambda p: PERIOD_LABEL[p],
+        label_visibility="collapsed",
     )
 
     run_btn = st.button("🔍 Get Recommendations", type="primary")
@@ -289,40 +457,35 @@ tab_rec, tab_compare, tab_detail, tab_chart = st.tabs([
 ])
 
 # ════════════════════════════════════════════════════════════════
-# Tab 1 — Recommendations (batch)
+# Tab 1 — Recommendations
 # ════════════════════════════════════════════════════════════════
 with tab_rec:
     if not selected:
         st.info("Select stocks in the sidebar and click **Get Recommendations**.")
     elif run_btn or "results" not in st.session_state:
-        if not selected:
-            st.stop()
-        results = []
+        results  = []
         progress = st.progress(0, text="Fetching data…")
         for i, ticker in enumerate(selected):
             progress.progress((i + 1) / len(selected), text=f"Processing {ticker}…")
-            signal, confidence, latest, _ = predict_ticker(ticker, period="6mo")
+            signal, confidence, latest, _ = predict_ticker(ticker)
             if signal is None:
                 results.append({"Ticker": ticker, "Close ($)": "—", "Signal": "⚠️ No data", "Confidence": "—"})
                 continue
-            conf_str = f"{confidence:.1f}%" if confidence is not None else "N/A"
             results.append({
-                "Ticker":       ticker,
-                "Close ($)":    round(float(latest["Close"]), 2),
-                "Signal":       f"{SIGNAL_EMOJI[signal]} {SIGNAL_LABEL[signal]}",
-                "Confidence":   conf_str,
-                "_sig":         signal,
-                "_conf":        confidence or 0,
+                "Ticker":     ticker,
+                "Close ($)":  round(float(latest["Close"]), 2),
+                "Signal":     f"{SIGNAL_EMOJI[signal]} {SIGNAL_LABEL[signal]}",
+                "Confidence": f"{confidence:.1f}%" if confidence is not None else "N/A",
+                "_sig":       signal,
+                "_conf":      confidence or 0,
             })
         progress.empty()
         st.session_state["results"] = results
-        st.session_state["selected"] = selected
 
     if "results" in st.session_state:
-        res = st.session_state["results"]
+        res   = st.session_state["results"]
         valid = [r for r in res if "_sig" in r]
 
-        # Summary cards
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🟢 BUY",  sum(1 for r in valid if r["_sig"] ==  1))
         c2.metric("🟡 HOLD", sum(1 for r in valid if r["_sig"] ==  0))
@@ -331,24 +494,21 @@ with tab_rec:
         c4.metric("🎯 Avg Confidence", f"{avg_conf:.1f}%")
 
         st.markdown("---")
-
         display = pd.DataFrame([{k: v for k, v in r.items() if not k.startswith("_")} for r in res])
         st.dataframe(display, use_container_width=True, hide_index=True)
 
-        # Confidence distribution bar chart
         if HAS_PROBA and valid:
-            st.markdown("#### 🎯 Confidence Distribution")
+            st.markdown("#### 🎯 Confidence by Stock")
             fig_c, ax_c = plt.subplots(figsize=(10, 2.5))
-            tickers_  = [r["Ticker"] for r in valid]
-            confs_    = [r["_conf"] for r in valid]
-            colors_   = [SIGNAL_COLOR[r["_sig"]] for r in valid]
+            tickers_ = [r["Ticker"] for r in valid]
+            confs_   = [r["_conf"]  for r in valid]
+            colors_  = [SIGNAL_COLOR[r["_sig"]] for r in valid]
             bars = ax_c.barh(tickers_, confs_, color=colors_, alpha=0.85)
             ax_c.set_xlim(0, 100)
             ax_c.set_xlabel("Confidence (%)")
             ax_c.axvline(50, color="gray", linestyle="--", alpha=0.5, linewidth=1)
-            for bar, val in zip(bars, confs_):
-                ax_c.text(val + 1, bar.get_y() + bar.get_height()/2,
-                          f"{val:.1f}%", va="center", fontsize=9)
+            for bar, v in zip(bars, confs_):
+                ax_c.text(v + 1, bar.get_y() + bar.get_height() / 2, f"{v:.1f}%", va="center", fontsize=9)
             ax_c.grid(axis="x", alpha=0.2)
             fig_c.tight_layout()
             st.pyplot(fig_c)
@@ -373,133 +533,98 @@ with tab_compare:
         period_results = {}
         with st.spinner(f"Fetching {compare_ticker} across {len(compare_periods)} periods…"):
             for period in compare_periods:
-                signal, confidence, latest, _ = predict_ticker(compare_ticker, period=period)
-                period_results[period] = {
-                    "signal": signal,
-                    "confidence": confidence,
-                    "latest": latest,
-                }
-        st.session_state["period_results"] = period_results
-        st.session_state["compare_ticker"] = compare_ticker
+                sig, conf, latest, _ = predict_ticker(compare_ticker, period=period)
+                period_results[period] = {"signal": sig, "confidence": conf, "latest": latest}
+        st.session_state["period_results"]  = period_results
+        st.session_state["compare_ticker"]  = compare_ticker
 
     if "period_results" in st.session_state and st.session_state.get("compare_ticker") == compare_ticker:
         period_results = st.session_state["period_results"]
-
         cols = st.columns(len(period_results))
         for col, (period, data) in zip(cols, period_results.items()):
-            sig = data["signal"]
+            sig  = data["signal"]
             conf = data["confidence"]
             with col:
                 if sig is None:
                     st.error(f"**{PERIOD_LABEL[period]}**\n\nNo data")
                 else:
-                    color = SIGNAL_COLOR[sig]
+                    color     = SIGNAL_COLOR[sig]
+                    conf_line = (f"<div style='font-size:1rem;color:#555;margin-top:4px'>"
+                                 f"Confidence: {conf:.1f}%</div>") if conf is not None else ""
                     st.markdown(
                         f"<div style='text-align:center;padding:16px;border-radius:10px;"
-                        f"background:{color}18;border:2px solid {color};margin-bottom:8px'>"
-                        f"<div style='font-size:1.1rem;font-weight:600;color:#888'>{PERIOD_LABEL[period]}</div>"
+                        f"background:{color}12;border:2px solid {color};margin-bottom:8px'>"
+                        f"<div style='font-size:1.1rem;font-weight:600;color:#555'>{PERIOD_LABEL[period]}</div>"
                         f"<div style='font-size:2.5rem;margin:4px 0'>{SIGNAL_EMOJI[sig]}</div>"
                         f"<div style='font-size:1.4rem;font-weight:700;color:{color}'>{SIGNAL_LABEL[sig]}</div>"
-                        + (f"<div style='font-size:1rem;color:#aaa;margin-top:4px'>信心度: {conf:.1f}%</div>" if conf is not None else "")
-                        + "</div>",
+                        + conf_line + "</div>",
                         unsafe_allow_html=True,
                     )
-                    latest = data["latest"]
-                    if latest is not None:
-                        st.caption(f"Close: ${float(latest['Close']):.2f}")
-                        st.caption(f"Return 5d: {float(latest['Return_5d'])*100:.2f}%")
-                        st.caption(f"MA Ratio: {float(latest['MA_ratio']):.4f}")
+                    if data["latest"] is not None:
+                        st.caption(f"Close: ${float(data['latest']['Close']):.2f}")
+                        st.caption(f"5d Return: {float(data['latest']['Return_5d'])*100:.2f}%")
+                        st.caption(f"MA Ratio: {float(data['latest']['MA_ratio']):.4f}")
 
-        # Consistency analysis
         st.markdown("---")
         sigs = [d["signal"] for d in period_results.values() if d["signal"] is not None]
         if sigs:
             if len(set(sigs)) == 1:
                 s = sigs[0]
-                st.success(f"✅ **一致信號**: 所有時間段均顯示 {SIGNAL_EMOJI[s]} **{SIGNAL_LABEL[s]}**，信號較為可靠。")
+                st.success(f"✅ **Consistent signal**: All periods show {SIGNAL_EMOJI[s]} **{SIGNAL_LABEL[s]}** — this signal is more reliable.")
             else:
-                st.warning("⚠️ **信號不一致**: 不同時間段顯示不同信號，市場可能處於轉折點，建議謹慎操作並等待確認。")
-                unique_sigs = set(sigs)
-                for s in unique_sigs:
-                    periods_with_sig = [PERIOD_LABEL[p] for p, d in period_results.items() if d["signal"] == s]
-                    st.markdown(f"- {SIGNAL_EMOJI[s]} **{SIGNAL_LABEL[s]}**: {', '.join(periods_with_sig)}")
+                st.warning("⚠️ **Conflicting signals**: Different periods show different signals. The stock may be at a turning point — wait for confirmation before acting.")
+                for s in set(sigs):
+                    periods_with = [PERIOD_LABEL[p] for p, d in period_results.items() if d["signal"] == s]
+                    st.markdown(f"- {SIGNAL_EMOJI[s]} **{SIGNAL_LABEL[s]}**: {', '.join(periods_with)}")
 
 # ════════════════════════════════════════════════════════════════
 # Tab 3 — Single Stock Detail
 # ════════════════════════════════════════════════════════════════
 with tab_detail:
     pick = st.selectbox("Choose a stock", options=selected if selected else DEFAULT_TICKERS[:5])
-    detail_period = st.selectbox(
-        "Analysis period",
-        options=PERIODS,
-        index=2,
-        format_func=lambda p: PERIOD_LABEL[p],
-        key="detail_period_sel",
-    )
 
     if st.button("Analyse", key="analyse_btn"):
         with st.spinner(f"Fetching {pick}…"):
-            signal, confidence, latest, df_feat = predict_ticker(pick, period=detail_period)
+            signal, confidence, latest, df_feat = predict_ticker(pick)
 
         if signal is None:
             st.error(f"Could not fetch data for **{pick}**. Check the ticker symbol.")
         else:
             color = SIGNAL_COLOR[signal]
-            label = SIGNAL_LABEL[signal]
-            emoji = SIGNAL_EMOJI[signal]
 
-            # Signal + confidence card
-            conf_text = f"<div style='font-size:1.1rem;color:{color}88;margin-top:6px'>信心度: {confidence:.1f}%</div>" if confidence is not None else ""
+            # Signal banner
+            conf_text = (f"<div style='font-size:1.1rem;color:{color}99;margin-top:6px'>"
+                         f"Confidence: {confidence:.1f}%</div>") if confidence is not None else ""
             st.markdown(
                 f"<div style='text-align:center;padding:20px;border-radius:12px;"
-                f"background:{color}22;border:2px solid {color}'>"
-                f"<span style='font-size:3rem'>{emoji}</span><br>"
-                f"<span style='font-size:2rem;font-weight:700;color:{color}'>{pick}: {label}</span>"
-                + conf_text +
-                f"</div>",
+                f"background:{color}15;border:2px solid {color}'>"
+                f"<span style='font-size:3rem'>{SIGNAL_EMOJI[signal]}</span><br>"
+                f"<span style='font-size:2rem;font-weight:700;color:{color}'>{pick}: {SIGNAL_LABEL[signal]}</span>"
+                + conf_text + "</div>",
                 unsafe_allow_html=True,
             )
+            st.markdown("")
 
-            # Confidence meter
-            if confidence is not None:
-                st.markdown("")
-                st.markdown(f"**🎯 信心度: {confidence:.1f}%**")
-                st.progress(int(confidence))
-
+            render_confidence(confidence, color)
+            st.markdown("")
+            render_signal_plain(signal)
             st.markdown("")
 
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Latest Close",     f"${latest['Close']:.2f}")
-            m2.metric("1-Day Return",     f"{latest['Return_1d']*100:.2f}%")
-            m3.metric("5-Day Return",     f"{latest['Return_5d']*100:.2f}%")
-            m4.metric("MA Ratio (5/20)",  f"{latest['MA_ratio']:.4f}")
-
-            # ── Decision Explanation ─────────────────────────────────
-            st.markdown("---")
-            st.markdown("#### 💡 決策解釋")
-            reasons = generate_explanation(signal, latest)
-            for reason in reasons:
-                st.markdown(f"- {reason}")
-
-            # Top model features
-            if HAS_IMPORTANCE:
-                st.markdown("---")
-                st.markdown("#### 🔬 模型最重要指標 (Top 5)")
-                top_feats = get_top_features(5)
-                for feat_col, feat_name, importance in top_feats:
-                    val = float(latest.get(feat_col, 0))
-                    st.markdown(
-                        f"**{feat_name}** &nbsp; `{val:.4f}` &nbsp; "
-                        f"<span style='color:#888'>（模型權重: {importance*100:.1f}%）</span>",
-                        unsafe_allow_html=True,
-                    )
+            m1.metric("Latest Close",    f"${float(latest['Close']):.2f}")
+            m2.metric("1-Day Return",    f"{float(latest['Return_1d'])*100:.2f}%")
+            m3.metric("5-Day Return",    f"{float(latest['Return_5d'])*100:.2f}%")
+            m4.metric("MA Ratio (5/20)", f"{float(latest['MA_ratio']):.4f}")
 
             st.markdown("---")
-            st.markdown("#### 📊 All Feature Values")
+            render_top_factors(latest)
+
+            st.markdown("---")
+            st.markdown("#### 📊 Feature Values Used for Prediction")
             feat_df = pd.DataFrame({
-                "Feature (EN)": FEATURE_COLS,
-                "Feature (中文)": [FEATURE_NAMES.get(f, f) for f in FEATURE_COLS],
-                "Value": [round(float(latest[f]), 6) for f in FEATURE_COLS],
+                "Feature":     FEATURE_COLS,
+                "Value":       [round(float(latest[f]), 6) for f in FEATURE_COLS],
+                "Description": [FEATURE_DESCRIBE.get(f, "") for f in FEATURE_COLS],
             })
             st.dataframe(feat_df, use_container_width=True, hide_index=True, height=320)
 
@@ -510,46 +635,71 @@ with tab_chart:
     chart_ticker = st.selectbox(
         "Select stock", options=selected if selected else DEFAULT_TICKERS[:5], key="chart_sel"
     )
-    chart_period = st.selectbox(
-        "Data period",
-        options=PERIODS,
-        index=2,
-        format_func=lambda p: PERIOD_LABEL[p],
-        key="chart_period_sel",
+
+    st.markdown(
+        "<div class='info-box'>"
+        "<b>ℹ️ Why doesn't the display period affect the prediction?</b><br><br>"
+        "The model predicts using <b>today's technical indicators</b> (e.g. MA20, Momentum_20). "
+        "These indicators need at least 20 trading days of history to compute correctly.<br>"
+        "So the app always fetches <b>6 months of data</b> to ensure all indicators are accurate — "
+        "but the prediction only looks at the <b>most recent day's values</b>.<br>"
+        "The display period you select only controls <b>how much of the chart is shown</b>. "
+        "It does not change the signal."
+        "</div>",
+        unsafe_allow_html=True,
     )
-    days = st.slider("Days to display", 30, 365, 90)
+
+    st.markdown(f"Displaying: **{DISPLAY_PERIOD_LABEL[chart_display_period]}** (change period in the sidebar ←)")
 
     if st.button("Show Chart", key="chart_btn"):
         with st.spinner(f"Loading {chart_ticker}…"):
-            sig, conf, latest, df_feat = predict_ticker(chart_ticker, period=chart_period)
+            sig, conf, latest, df_feat = predict_ticker(chart_ticker)
 
         if df_feat is None:
             st.error(f"Could not fetch data for **{chart_ticker}**.")
         else:
-            df_plot = df_feat.dropna(subset=["MA_5", "MA_20"]).tail(days)
+            df_plot = slice_for_display(
+                df_feat.dropna(subset=["MA_5", "MA_20"]),
+                chart_display_period,
+            )
 
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(df_plot["Date"], df_plot["Close"], label="Close", color="#3b82f6", linewidth=1.8)
-            ax.plot(df_plot["Date"], df_plot["MA_5"],  label="MA 5",  color="#f97316", linewidth=1.2, linestyle="--")
-            ax.plot(df_plot["Date"], df_plot["MA_20"], label="MA 20", color="#a855f7", linewidth=1.2, linestyle="--")
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
-            ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
-            plt.xticks(rotation=30, ha="right")
-            ax.set_title(f"{chart_ticker} — Close Price & Moving Averages (last {days} days)")
-            ax.set_ylabel("Price (USD)")
-            ax.legend()
-            ax.grid(alpha=0.25)
-            fig.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
+            if df_plot.empty:
+                st.error("Not enough data for the selected display period. Try a longer window.")
+            else:
+                period_label = DISPLAY_PERIOD_LABEL[chart_display_period]
+                fig, ax = plt.subplots(figsize=(10, 4))
+                ax.plot(df_plot["Date"], df_plot["Close"], label="Close", color="#3b82f6", linewidth=1.8)
+                ax.plot(df_plot["Date"], df_plot["MA_5"],  label="MA 5",  color="#f97316", linewidth=1.2, linestyle="--")
+                ax.plot(df_plot["Date"], df_plot["MA_20"], label="MA 20", color="#a855f7", linewidth=1.2, linestyle="--")
 
-            if sig is not None:
-                color = SIGNAL_COLOR[sig]
-                conf_str = f" &nbsp; 信心度: **{conf:.1f}%**" if conf is not None else ""
-                st.markdown(
-                    f"**Current signal:** "
-                    f"<span style='color:{color};font-size:1.2rem;font-weight:bold'>"
-                    f"{SIGNAL_EMOJI[sig]} {SIGNAL_LABEL[sig]}</span>"
-                    + conf_str,
-                    unsafe_allow_html=True,
-                )
+                if chart_display_period == "1wk":
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%a %b %d"))
+                    ax.xaxis.set_major_locator(mdates.DayLocator())
+                elif chart_display_period == "1mo":
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+                    ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+                else:
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+                    ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+
+                plt.xticks(rotation=30, ha="right")
+                ax.set_title(f"{chart_ticker} — Close & Moving Averages ({period_label})")
+                ax.set_ylabel("Price (USD)")
+                ax.legend()
+                ax.grid(alpha=0.25)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
+                if sig is not None:
+                    color    = SIGNAL_COLOR[sig]
+                    conf_str = f" &nbsp; Confidence: **{conf:.1f}%**" if conf is not None else ""
+                    st.markdown(
+                        f"**Signal:** "
+                        f"<span style='color:{color};font-size:1.2rem;font-weight:bold'>"
+                        f"{SIGNAL_EMOJI[sig]} {SIGNAL_LABEL[sig]}</span>" + conf_str,
+                        unsafe_allow_html=True,
+                    )
+                    render_signal_plain(sig)
+                    st.markdown("")
+                    render_top_factors(latest)
