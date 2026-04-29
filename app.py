@@ -162,9 +162,20 @@ COMPANY_NAMES = {
     "QQQ": "Invesco QQQ Trust",
 }
 
+@st.cache_data(show_spinner=False)
+def get_company_name(ticker: str) -> str:
+    """Lookup company name: local dict first, then yFinance."""
+    if ticker in COMPANY_NAMES:
+        return COMPANY_NAMES[ticker]
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get("longName") or info.get("shortName") or ticker
+    except Exception:
+        return ticker
+
 def ticker_label(t: str) -> str:
-    name = COMPANY_NAMES.get(t, "")
-    return f"{t} — {name}" if name else t
+    name = get_company_name(t)
+    return f"{t} — {name}" if name and name != t else t
 
 # ── Load model ───────────────────────────────────────────────────
 @st.cache_resource
@@ -408,9 +419,31 @@ def render_top_factors(latest: pd.Series):
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    custom_raw  = st.text_input("Add custom tickers (comma-separated)", placeholder="e.g. NFLX, UBER")
-    extra       = [t.strip().upper() for t in custom_raw.split(",") if t.strip()]
-    all_tickers = list(dict.fromkeys(DEFAULT_TICKERS + extra))
+    # ── Ticker search ──────────────────────────────────────────────
+    st.markdown("**Search & add a stock**")
+    search_input = st.text_input(
+        "search_ticker",
+        placeholder="Type ticker or company name (e.g. NFLX, Netflix)",
+        label_visibility="collapsed",
+    )
+
+    # If user typed something, try to resolve it via yFinance
+    if search_input.strip():
+        candidate = search_input.strip().upper()
+        name = get_company_name(candidate)
+        if name != candidate:
+            # Valid ticker with a real company name
+            if st.button(f"➕ Add  {candidate} — {name}", use_container_width=True):
+                if "extra_tickers" not in st.session_state:
+                    st.session_state["extra_tickers"] = []
+                if candidate not in st.session_state["extra_tickers"]:
+                    st.session_state["extra_tickers"].append(candidate)
+                    st.rerun()
+        else:
+            st.caption(f"⚠️ Could not find company for '{search_input.strip()}'. Check the ticker symbol.")
+
+    extra_tickers = st.session_state.get("extra_tickers", [])
+    all_tickers   = list(dict.fromkeys(DEFAULT_TICKERS + extra_tickers))
 
     selected = st.multiselect(
         "Stocks to analyse",
@@ -472,9 +505,15 @@ with tab_home:
         st.markdown(
             "<div class='home-section'>"
             "<h3>📦 Dataset & Features</h3>"
-            "<p>Our model is trained on historical market data sourced via <b>yFinance</b>, "
-            "covering thousands of daily price and volume observations across U.S. equities and ETFs. "
-            "We engineer <b>18 technical features</b> from raw OHLCV data:</p>",
+            "<p>Our model was trained on historical market data sourced via <b>yFinance</b>, "
+            "covering <b>20 large-cap S&P 500 companies</b> with thousands of daily price and volume observations.</p>"
+            "<div style='background:#fefce8;border-left:4px solid #eab308;border-radius:6px;padding:10px 14px;margin:10px 0;font-size:0.88rem;color:#713f12'>"
+            "<b>⚠️ Accuracy Note</b><br>"
+            "Because the model was trained on large-cap U.S. stocks, predictions are most reliable for:<br>"
+            "✅ S&P 500 components &nbsp; ✅ Large-cap U.S. equities &nbsp; ✅ U.S. ETFs (SPY, QQQ)<br>"
+            "Predictions for small-cap stocks, international equities, or crypto ETFs may be less accurate — use with caution."
+            "</div>"
+            "<p>We engineer <b>18 technical features</b> from raw OHLCV data:</p>",
             unsafe_allow_html=True,
         )
         feature_table = pd.DataFrame({
